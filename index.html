@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>Gemma Cam — Live Camera Translation</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F4F7;</text></svg>">
+</head>
+<body>
+
+<!-- ═══ Start Screen ═══ -->
+<div id="start-screen">
+    <div class="start-inner">
+        <pre class="logo">
+  ╔═╗╔═╗╔═╗╦╔═╗╦ ╦
+  ╠═╣╠═╝╠═╣║║  ╚╦╝
+  ╩ ╩╩  ╩ ╩╩╚═╝ ╩
+  CAM TRANSLATE</pre>
+        <p class="tagline">Point your camera at any text.<br>Get instant translation powered by<br><strong>Gemma 4 31B</strong> on <strong>Cerebras</strong>.</p>
+        <button id="start-btn" class="big-btn">START CAMERA</button>
+        <p class="hint">Requires camera permission · Best with clear text and good lighting</p>
+    </div>
+</div>
+
+<!-- ═══ Camera ═══ -->
+<video id="video" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+
+<!-- ═══ Top HUD ═══ -->
+<div id="hud-top">
+    <div id="stats-bar">
+        <div class="stat"><span class="stat-k">LAT</span><span class="stat-v" id="s-lat">--</span></div>
+        <div class="stat"><span class="stat-k">TOK/S</span><span class="stat-v" id="s-tps">--</span></div>
+        <div class="stat"><span class="stat-k">DET</span><span class="stat-v" id="s-det">0</span></div>
+        <div class="stat"><span class="stat-k">SRC</span><span class="stat-v" id="s-lang">--</span></div>
+    </div>
+    <button id="settings-btn" title="Settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+    </button>
+</div>
+
+<!-- ═══ Bottom Controls ═══ -->
+<div id="hud-bottom">
+    <div id="scan-status-text"></div>
+    <div class="controls-row">
+        <button id="auto-btn" class="toggle-btn">AUTO</button>
+        <button id="scan-btn" class="scan-btn">
+            <span class="scan-ring"></span>
+            <span class="scan-label">SCAN</span>
+        </button>
+        <button id="clear-btn" class="toggle-btn">CLEAR</button>
+    </div>
+    <div class="powered-by">Cerebras &times; Gemma 4 31B</div>
+</div>
+
+<!-- ═══ Settings Panel ═══ -->
+<div id="settings-panel" class="hidden">
+    <div class="settings-backdrop"></div>
+    <div class="settings-card">
+        <h2>Settings</h2>
+        <div class="field">
+            <label for="key-input">Cerebras API Key</label>
+            <input type="password" id="key-input" placeholder="csk-..." autocomplete="off">
+        </div>
+        <div class="field">
+            <label for="lang-select">Target Language</label>
+            <select id="lang-select">
+                <option value="English">English</option>
+                <option value="Simplified Chinese">简体中文 / Simplified Chinese</option>
+                <option value="Traditional Chinese">繁體中文 / Traditional Chinese</option>
+                <option value="Spanish">Español / Spanish</option>
+                <option value="French">Français / French</option>
+                <option value="Japanese">日本語 / Japanese</option>
+                <option value="Korean">한국어 / Korean</option>
+                <option value="German">Deutsch / German</option>
+                <option value="Italian">Italiano / Italian</option>
+                <option value="Portuguese">Português / Portuguese</option>
+                <option value="Russian">Русский / Russian</option>
+                <option value="Arabic">العربية / Arabic</option>
+                <option value="Hindi">हिन्दी / Hindi</option>
+                <option value="Vietnamese">Tiếng Việt / Vietnamese</option>
+                <option value="Thai">ภาษาไทย / Thai</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="interval-input">Auto-scan interval (ms)</label>
+            <input type="number" id="interval-input" value="2500" min="800" max="10000" step="100">
+        </div>
+        <div class="settings-actions">
+            <button id="settings-save" class="big-btn">SAVE</button>
+            <button id="settings-close" class="text-btn">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Toast ═══ -->
+<div id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
