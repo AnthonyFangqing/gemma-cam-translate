@@ -51,6 +51,8 @@ const state = {
     autoTimer: null,
     cameraReady: false,
     flashEl: null,
+    captureW: 0,
+    captureH: 0,
 };
 
 // ═══════════════════════════════════════════════
@@ -116,6 +118,8 @@ function captureFrame() {
     c.width = w;
     c.height = h;
     c.getContext('2d').drawImage(video, 0, 0, w, h);
+    state.captureW = w;
+    state.captureH = h;
     return c.toDataURL('image/jpeg', JPEG_QUALITY);
 }
 
@@ -142,7 +146,7 @@ async function scan() {
             content: [
                 {
                     type: 'text',
-                    text: `Detect all visible text in this image. For each text region, provide: the original text, the source language, the translation to ${state.targetLang}, and bounding box coordinates as percentages (0-100) of the image dimensions where (0,0) is top-left and (100,100) is bottom-right. Return only valid JSON.`
+                    text: `You are a precise OCR system. The image is ${state.captureW}x${state.captureH} pixels. Detect all visible text regions. For each region, provide bounding box coordinates in PIXELS (0 to ${state.captureW} for x, 0 to ${state.captureH} for y) where (0,0) is top-left. Also provide the original text, detected language, and translation to ${state.targetLang}. Be as accurate as possible with bounding boxes. Return only valid JSON.`
                 },
                 {
                     type: 'image_url',
@@ -221,16 +225,35 @@ function mapBox(det) {
     const dh = video.clientHeight;
     if (!vw || !vh || !dw || !dh) return null;
 
+    // Normalize coordinates to fractions (0-1) of the captured image
+    // Model may return pixels or percentages — handle both
+    const maxVal = Math.max(det.x1, det.x2, det.y1, det.y2);
+    let nf = (v, dim) => v / dim;  // default: pixel coords
+
+    if (maxVal <= 100 && state.captureW > 100) {
+        // Values are percentages (0-100)
+        nf = (v, dim) => v / 100;
+    }
+    // else: values are pixels, divide by capture dimensions
+
+    const x1f = nf(det.x1, state.captureW);
+    const y1f = nf(det.y1, state.captureH);
+    const x2f = nf(det.x2, state.captureW);
+    const y2f = nf(det.y2, state.captureH);
+
+    // Map from captured image space to video display space (object-fit: cover)
     const scale = Math.max(dw / vw, dh / vh);
     const sw = vw * scale;
     const sh = vh * scale;
     const ox = (sw - dw) / 2;
     const oy = (sh - dh) / 2;
 
-    const x1 = (det.x1 / 100) * vw * scale - ox;
-    const y1 = (det.y1 / 100) * vh * scale - oy;
-    const x2 = (det.x2 / 100) * vw * scale - ox;
-    const y2 = (det.y2 / 100) * vh * scale - oy;
+    // The captured frame is a scaled version of the video frame.
+    // Fractions map the same way since both capture and video share aspect ratio.
+    const x1 = x1f * sw - ox;
+    const y1 = y1f * sh - oy;
+    const x2 = x2f * sw - ox;
+    const y2 = y2f * sh - oy;
 
     return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
 }
