@@ -449,3 +449,30 @@ button {
 #flash.active {
     opacity: 1;
 }
+
+/* ═══ Translation List ═══ */
+#trans-list .trans-item {
+    background: rgba(0, 0, 0, 0.85);
+    border-left: 3px solid var(--accent);
+    border-radius: 3px;
+    padding: 6px 10px;
+    margin-bottom: 4px;
+    pointer-events: auto;
+}
+
+#trans-list .trans-orig {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+    margin-bottom: 2px;
+}
+
+#trans-list .trans-lang {
+    font-size: 9px;
+    color: var(--accent);
+}
+
+#trans-list .trans-trans {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+}

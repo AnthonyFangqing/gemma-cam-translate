@@ -53,6 +53,7 @@ const state = {
     flashEl: null,
     captureW: 0,
     captureH: 0,
+    debugMode: false,
 };
 
 // ═══════════════════════════════════════════════
@@ -62,6 +63,34 @@ const $ = id => document.getElementById(id);
 const video = $('video');
 const overlay = $('overlay');
 const ctx = overlay.getContext('2d');
+
+// ═══════════════════════════════════════════════
+// Debug
+// ═══════════════════════════════════════════════
+function dbg(...args) {
+    console.log('[GemmaCam]', ...args);
+}
+
+function showDebug() {
+    const el = $('debug-panel');
+    if (!el) return;
+    const lines = [
+        `VIDEO: ${video.videoWidth}x${video.videoHeight}`,
+        `DISPLAY: ${video.clientWidth}x${video.clientHeight}`,
+        `CAPTURE: ${state.captureW}x${state.captureH}`,
+        `DETECTIONS: ${state.detections.length}`,
+    ];
+    for (const d of state.detections) {
+        const box = mapBox(d);
+        lines.push(
+            `  "${d.original}" -> "${d.translation}" [${d.language}]`,
+            `    raw: (${d.x1},${d.y1})-(${d.x2},${d.y2})`,
+            `    mapped: ${box ? `(${Math.round(box.x)},${Math.round(box.y)}) ${Math.round(box.w)}x${Math.round(box.h)}` : 'NULL'}`
+        );
+    }
+    el.textContent = lines.join('\n');
+    el.style.display = state.debugMode ? 'block' : 'none';
+}
 
 // ═══════════════════════════════════════════════
 // Camera
@@ -82,6 +111,7 @@ async function startCamera() {
         });
         state.cameraReady = true;
         $('start-screen').classList.add('hidden');
+        dbg('Camera started', video.videoWidth, 'x', video.videoHeight);
         toast('Camera ready — tap SCAN to translate');
     } catch (err) {
         toast('Camera access denied: ' + err.message, 4000, true);
@@ -97,6 +127,7 @@ function resizeOverlay() {
     overlay.style.width = rect.width + 'px';
     overlay.style.height = rect.height + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    dbg('Overlay resized', overlay.width, 'x', overlay.height, 'DPR=', dpr);
     if (state.detections.length) drawOverlay();
 }
 
@@ -120,6 +151,7 @@ function captureFrame() {
     c.getContext('2d').drawImage(video, 0, 0, w, h);
     state.captureW = w;
     state.captureH = h;
+    dbg('Captured frame', w, 'x', h);
     return c.toDataURL('image/jpeg', JPEG_QUALITY);
 }
 
@@ -176,7 +208,7 @@ async function scan() {
             const err = await resp.json().catch(() => ({}));
             const msg = err.error?.message || err.message || resp.statusText;
             toast('API error ' + resp.status + ': ' + msg, 4000, true);
-            console.error('API error:', resp.status, err);
+            dbg('API error:', resp.status, err);
             state.scanning = false;
             $('scan-btn').classList.remove('scanning');
             $('scan-status-text').textContent = '';
@@ -186,28 +218,35 @@ async function scan() {
         const data = await resp.json();
         const elapsed = performance.now() - t0;
 
+        dbg('API response:', data);
+        dbg('Raw content:', data.choices[0].message.content);
+
         let parsed;
         try {
             parsed = JSON.parse(data.choices[0].message.content);
         } catch (e) {
-            // Fallback: try to extract JSON from text
             const m = data.choices[0].message.content.match(/\{[\s\S]*\}/);
             if (m) parsed = JSON.parse(m[0]);
             else throw e;
         }
 
         state.detections = parsed.detections || [];
+        dbg('Parsed detections:', state.detections.length, state.detections);
+
         drawOverlay();
         updateStats(data, elapsed);
+        updateTranslationList();
 
         const status = state.detections.length
             ? `${state.detections.length} text region${state.detections.length > 1 ? 's' : ''} found`
             : 'No text detected';
         $('scan-status-text').textContent = status;
 
+        if (state.debugMode) showDebug();
+
     } catch (err) {
         toast('Scan failed: ' + err.message, 4000, true);
-        console.error(err);
+        dbg('Scan error:', err);
         $('scan-status-text').textContent = '';
     } finally {
         state.scanning = false;
@@ -216,46 +255,48 @@ async function scan() {
 }
 
 // ═══════════════════════════════════════════════
-// Coordinate Mapping (object-fit: cover)
+// Coordinate Mapping
 // ═══════════════════════════════════════════════
 function mapBox(det) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     const dw = video.clientWidth;
     const dh = video.clientHeight;
-    if (!vw || !vh || !dw || !dh) return null;
-
-    // Normalize coordinates to fractions (0-1) of the captured image
-    // Model may return pixels or percentages — handle both
-    const maxVal = Math.max(det.x1, det.x2, det.y1, det.y2);
-    let nf = (v, dim) => v / dim;  // default: pixel coords
-
-    if (maxVal <= 100 && state.captureW > 100) {
-        // Values are percentages (0-100)
-        nf = (v, dim) => v / 100;
+    if (!vw || !vh || !dw || !dh || !state.captureW || !state.captureH) {
+        dbg('mapBox: missing dims', { vw, vh, dw, dh, cw: state.captureW, ch: state.captureH });
+        return null;
     }
-    // else: values are pixels, divide by capture dimensions
 
-    const x1f = nf(det.x1, state.captureW);
-    const y1f = nf(det.y1, state.captureH);
-    const x2f = nf(det.x2, state.captureW);
-    const y2f = nf(det.y2, state.captureH);
+    // Always treat model coordinates as pixels, normalize to fractions (0-1)
+    let x1f = det.x1 / state.captureW;
+    let y1f = det.y1 / state.captureH;
+    let x2f = det.x2 / state.captureW;
+    let y2f = det.y2 / state.captureH;
 
-    // Map from captured image space to video display space (object-fit: cover)
+    // Clamp fractions to [0, 1]
+    x1f = Math.max(0, Math.min(1, x1f));
+    y1f = Math.max(0, Math.min(1, y1f));
+    x2f = Math.max(0, Math.min(1, x2f));
+    y2f = Math.max(0, Math.min(1, y2f));
+
+    // Map from capture image space to video display space
+    // object-fit: cover means the video is scaled to cover the container
     const scale = Math.max(dw / vw, dh / vh);
     const sw = vw * scale;
     const sh = vh * scale;
     const ox = (sw - dw) / 2;
     const oy = (sh - dh) / 2;
 
-    // The captured frame is a scaled version of the video frame.
-    // Fractions map the same way since both capture and video share aspect ratio.
+    // The capture image has the same aspect ratio as the video,
+    // so fractions map directly to the displayed video area
     const x1 = x1f * sw - ox;
     const y1 = y1f * sh - oy;
     const x2 = x2f * sw - ox;
     const y2 = y2f * sh - oy;
 
-    return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    const result = { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    dbg('mapBox result:', det.original, result);
+    return result;
 }
 
 // ═══════════════════════════════════════════════
@@ -267,17 +308,31 @@ function drawOverlay() {
     const h = overlay.height / dpr;
     ctx.clearRect(0, 0, w, h);
 
+    dbg('drawOverlay: canvas', w, 'x', h, 'detections:', state.detections.length);
+
     for (const det of state.detections) {
         const box = mapBox(det);
         if (!box) continue;
-        // Skip off-screen boxes entirely
-        if (box.x + box.w < 0 || box.x > w || box.y + box.h < 0 || box.y > h) continue;
+        // Clamp to visible area instead of skipping
         drawDetection(box, det);
     }
 }
 
 function drawDetection(box, det) {
-    const { x, y, w, h } = box;
+    let { x, y, w, h } = box;
+
+    // Clamp to visible canvas area
+    const cw = overlay.width / (window.devicePixelRatio || 1);
+    const ch = overlay.height / (window.devicePixelRatio || 1);
+    x = Math.max(0, x);
+    y = Math.max(0, y);
+    w = Math.min(w, cw - x);
+    h = Math.min(h, ch - y);
+
+    if (w < 4 || h < 4) {
+        dbg('Box too small after clamp, skipping:', det.original);
+        return;
+    }
 
     // Semi-transparent fill
     ctx.fillStyle = BOX_FILL;
@@ -314,7 +369,7 @@ function drawDetection(box, det) {
     ctx.lineTo(x + w, y + h - bl);
     ctx.stroke();
 
-    drawLabels(box, det);
+    drawLabels({ x, y, w, h }, det);
 }
 
 function drawLabels(box, det) {
@@ -324,8 +379,8 @@ function drawLabels(box, det) {
     // ── Top label: original text + language ──
     ctx.font = `11px ${FONT}`;
     const origText = truncate(det.original, w - pad * 2, 11);
-    const origW = ctx.measureText(origText).width;
     const langText = '[' + det.language + ']';
+    const origW = ctx.measureText(origText).width;
     const langW = ctx.measureText(langText).width;
     const topW = Math.max(w, origW + langW + pad * 4);
     const topH = 20;
@@ -388,6 +443,33 @@ function roundRect(x, y, w, h, r) {
     ctx.lineTo(x, y + r);
     ctx.quadraticCurveTo(x, y, x + r, y);
     ctx.closePath();
+}
+
+// ═══════════════════════════════════════════════
+// Translation List (always-visible fallback)
+// ═══════════════════════════════════════════════
+function updateTranslationList() {
+    const el = $('trans-list');
+    if (!el) return;
+
+    if (!state.detections.length) {
+        el.style.display = 'none';
+        return;
+    }
+
+    el.style.display = 'block';
+    el.innerHTML = state.detections.map(d => `
+        <div class="trans-item">
+            <div class="trans-orig">${escapeHtml(d.original)} <span class="trans-lang">[${escapeHtml(d.language)}]</span></div>
+            <div class="trans-trans">${escapeHtml(d.translation)}</div>
+        </div>
+    `).join('');
+}
+
+function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
 }
 
 // ═══════════════════════════════════════════════
@@ -485,7 +567,6 @@ function saveSettings() {
     localStorage.setItem('gct_lang', state.targetLang);
     localStorage.setItem('gct_interval', state.scanInterval);
 
-    // Restart auto timer if running
     if (state.autoScan && state.autoTimer) {
         clearInterval(state.autoTimer);
         state.autoTimer = setInterval(() => {
@@ -501,12 +582,25 @@ function saveSettings() {
 // Init
 // ═══════════════════════════════════════════════
 function init() {
+    // Create debug panel
+    const dbgPanel = document.createElement('pre');
+    dbgPanel.id = 'debug-panel';
+    dbgPanel.style.cssText = 'position:fixed;bottom:140px;left:8px;right:8px;max-height:200px;overflow:auto;background:rgba(0,0,0,0.92);border:1px solid #00ff88;border-radius:4px;padding:8px;font-size:9px;color:#0f0;z-index:50;display:none;white-space:pre-wrap;pointer-events:auto;';
+    document.body.appendChild(dbgPanel);
+
+    // Create translation list
+    const transList = document.createElement('div');
+    transList.id = 'trans-list';
+    transList.style.cssText = 'position:fixed;bottom:120px;left:8px;right:8px;max-height:140px;overflow-y:auto;z-index:8;display:none;pointer-events:none;';
+    document.body.appendChild(transList);
+
     $('start-btn').addEventListener('click', startCamera);
     $('scan-btn').addEventListener('click', scan);
     $('auto-btn').addEventListener('click', toggleAuto);
     $('clear-btn').addEventListener('click', () => {
         state.detections = [];
         drawOverlay();
+        updateTranslationList();
         $('scan-status-text').textContent = '';
         $('s-det').textContent = '0';
         $('s-lang').textContent = '--';
@@ -516,23 +610,45 @@ function init() {
     $('settings-save').addEventListener('click', saveSettings);
     $('settings-close').addEventListener('click', closeSettings);
 
-    // Close settings on backdrop click
+    // Long-press settings button = toggle debug mode
+    let pressTimer;
+    const settingsBtn = $('settings-btn');
+    settingsBtn.addEventListener('touchstart', () => {
+        pressTimer = setTimeout(() => {
+            state.debugMode = !state.debugMode;
+            toast(state.debugMode ? 'Debug ON — check console' : 'Debug OFF');
+            if (state.debugMode) showDebug();
+            else $('debug-panel').style.display = 'none';
+        }, 800);
+    });
+    settingsBtn.addEventListener('touchend', () => clearTimeout(pressTimer));
+    settingsBtn.addEventListener('mousedown', () => {
+        pressTimer = setTimeout(() => {
+            state.debugMode = !state.debugMode;
+            toast(state.debugMode ? 'Debug ON — check console' : 'Debug OFF');
+            if (state.debugMode) showDebug();
+            else $('debug-panel').style.display = 'none';
+        }, 800);
+    });
+    settingsBtn.addEventListener('mouseup', () => clearTimeout(pressTimer));
+    settingsBtn.addEventListener('mouseleave', () => clearTimeout(pressTimer));
+
     $('settings-panel').querySelector('.settings-backdrop')
         .addEventListener('click', closeSettings);
 
-    // Resize overlay on window resize / orientation change
     let resizeTimer;
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(resizeOverlay, 100);
     });
 
-    // Prevent body scroll on iOS
     document.addEventListener('touchmove', e => {
         if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
             e.preventDefault();
         }
     }, { passive: false });
+
+    dbg('App initialized');
 }
 
 init();
